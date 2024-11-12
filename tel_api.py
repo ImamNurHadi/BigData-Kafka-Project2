@@ -5,9 +5,11 @@ import glob
 
 app = Flask(__name__)
 
-MODEL_RESULTS_DIR1 = 'model_1'
-MODEL_RESULTS_DIR2 = 'model_2'
-MODEL_RESULTS_DIR3 = 'model_3'
+MODEL_RESULTS_DIR = {
+    'model_1': 'model_1',
+    'model_2': 'model_2',
+    'model_3': 'model_3'
+}
 
 def read_json_lines(file_path):
     """Utility function to read JSON lines (one JSON object per line) and combine them into a JSON array."""
@@ -22,146 +24,119 @@ def read_json_lines(file_path):
         print(f"Error reading {file_path}: {e}")
         return None
 
-@app.route('/api/results/model_1', methods=['GET'])
-def get_all_results1():
-    """Get all results from all JSON files in model_1 directory."""
-    all_results = {}
+@app.route('/api/results/<model_name>/filter', methods=['POST'])
+def get_results_by_feature_range(model_name):
+    """Get predictions within specific ranges for various features in any model using POST."""
     
-    # Search for all JSON files in the model_1 directory
-    json_files = glob.glob(os.path.join(MODEL_RESULTS_DIR1, '*.json'))
-    for file_path in json_files:
-        model_name = os.path.splitext(os.path.basename(file_path))[0]  # Get model name from filename
-        model_results = read_json_lines(file_path)  # Use read_json_lines to read JSON line format
-        
-        if model_results:
-            all_results[model_name] = model_results
+    # Ensure the model_name is valid
+    if model_name not in MODEL_RESULTS_DIR:
+        return jsonify({"message": f"Model {model_name} not found."}), 404
     
-    if all_results:
-        return jsonify(all_results), 200
-    else:
-        return jsonify({"message": "No results found."}), 404
+    # Read the JSON data from the POST request body
+    feature_filters = request.json
+    if not feature_filters:
+        return jsonify({"message": "Feature filter criteria must be provided in the request body."}), 400
 
-@app.route('/api/results/model_2', methods=['GET'])
-def get_all_results2():
-    """Get all results from all JSON files in model_2 directory."""
-    all_results = {}
+    predictions = []
+    model_dir = MODEL_RESULTS_DIR[model_name]
+    json_files = glob.glob(os.path.join(model_dir, '*.json'))
     
-    # Search for all JSON files in the model_2 directory
-    json_files = glob.glob(os.path.join(MODEL_RESULTS_DIR2, '*.json'))
-    for file_path in json_files:
-        model_name = os.path.splitext(os.path.basename(file_path))[0]  # Get model name from filename
-        model_results = read_json_lines(file_path)  # Use read_json_lines to read JSON line format
-        
-        if model_results:
-            all_results[model_name] = model_results
-    
-    if all_results:
-        return jsonify(all_results), 200
-    else:
-        return jsonify({"message": "No results found."}), 404
-
-@app.route('/api/results/model_3', methods=['GET'])
-def get_all_results3():
-    """Get all results from all JSON files in model_3 directory."""
-    all_results = {}
-    
-    # Search for all JSON files in the model_3 directory
-    json_files = glob.glob(os.path.join(MODEL_RESULTS_DIR3, '*.json'))
-    for file_path in json_files:
-        model_name = os.path.splitext(os.path.basename(file_path))[0]  # Get model name from filename
-        model_results = read_json_lines(file_path)  # Use read_json_lines to read JSON line format
-        
-        if model_results:
-            all_results[model_name] = model_results
-    
-    if all_results:
-        return jsonify(all_results), 200
-    else:
-        return jsonify({"message": "No results found."}), 404
-
-@app.route('/api/results/model_1/humidity', methods=['GET'])
-def get_results_by_humidity():
-    """Get results for a specific humidity level."""
-    humidity = request.args.get('humidity')
-    if not humidity:
-        return jsonify({"message": "Humidity level is required."}), 400
-    
-    try:
-        humidity = float(humidity)  # Convert to float for comparison
-    except ValueError:
-        return jsonify({"message": "Invalid humidity level. Must be a number."}), 400
-    
-    all_results = []
-    json_files = glob.glob(os.path.join(MODEL_RESULTS_DIR1, '*.json'))
+    # Process each file in the specified model directory
     for file_path in json_files:
         model_results = read_json_lines(file_path)
         
         if model_results:
-            # Filter results based on the humidity level
-            filtered_results = [
-                result for result in model_results 
-                if result.get('humidity') == humidity
+            # Filter results based on feature ranges and collect only `prediction` values
+            filtered_predictions = [
+                {"prediction": result["prediction"]}
+                for result in model_results 
+                if all(
+                    feature_filters[feature].get('min', float('-inf')) <= result.get(feature, float('inf')) <= feature_filters[feature].get('max', float('inf'))
+                    for feature in feature_filters
+                )
             ]
             
-            # If any results match the humidity level, add them to all_results
-            if filtered_results:
-                all_results.extend(filtered_results)
+            # If any predictions match the feature ranges, add them to predictions list
+            if filtered_predictions:
+                predictions.extend(filtered_predictions)
+    
+    if predictions:
+        return jsonify(predictions), 200
+    else:
+        return jsonify({"message": "No results found for the specified feature ranges."}), 404
+
+@app.route('/api/results/<model_name>', methods=['GET'])
+def get_all_results(model_name):
+    """Get all results from all JSON files in the specified model directory."""
+    
+    # Ensure the model_name is valid
+    if model_name not in MODEL_RESULTS_DIR:
+        return jsonify({"message": f"Model {model_name} not found."}), 404
+
+    all_results = {}
+    model_dir = MODEL_RESULTS_DIR[model_name]
+    json_files = glob.glob(os.path.join(model_dir, '*.json'))
+    
+    # Process each file in the specified model directory
+    for file_path in json_files:
+        model_name = os.path.splitext(os.path.basename(file_path))[0]  # Get model name from filename
+        model_results = read_json_lines(file_path)
+        
+        if model_results:
+            all_results[model_name] = model_results
     
     if all_results:
         return jsonify(all_results), 200
     else:
-        return jsonify({"message": f"No results found for humidity {humidity}."}), 404
+        return jsonify({"message": "No results found."}), 404
 
-@app.route('/api/results/<model_name>', methods=['GET'])
-def get_model_results_endpoint(model_name):
-    """Get results for a specific model by file name."""
-    model_file_path = os.path.join(MODEL_RESULTS_DIR1, f"{model_name}.json")
-    model_results = read_json_lines(model_file_path)  # Use read_json_lines to read JSON line format
+@app.route('/api/recommendations/weather', methods=['POST'])
+def get_weather_recommendations():
+    """Get recommendations for places based on weather conditions such as low temperature and humidity."""
     
-    if model_results:
-        return jsonify(model_results), 200
-    else:
-        return jsonify({"message": f"Results for {model_name} not found."}), 404
+    # Read the weather conditions from the POST request body
+    weather_conditions = request.json
+    if not weather_conditions:
+        return jsonify({"message": "Weather condition criteria must be provided in the request body."}), 400
+    
+    # Extract temperature and humidity range from the request body
+    temperature_min = weather_conditions.get('temperature_min', float('-inf'))
+    temperature_max = weather_conditions.get('temperature_max', float('inf'))
+    humidity_min = weather_conditions.get('humidity_min', float('-inf'))
+    humidity_max = weather_conditions.get('humidity_max', float('inf'))
 
-@app.route('/api/results/<model_name>/device', methods=['GET'])
-def get_device_results(model_name):
-    """Get predictions for a specific device ID from a specific model."""
-    device_id = request.args.get('device')
-    if not device_id:
-        return jsonify({"message": "Device ID is required."}), 400
+    recommendations = []
     
-    model_file_path = os.path.join(MODEL_RESULTS_DIR1, f"{model_name}.json")
-    model_results = read_json_lines(model_file_path)
+    # Iterate through all model directories and filter based on the weather conditions
+    for model_name, model_dir in MODEL_RESULTS_DIR.items():
+        json_files = glob.glob(os.path.join(model_dir, '*.json'))
+        
+        for file_path in json_files:
+            model_results = read_json_lines(file_path)
+            
+            if model_results:
+                # Filter results based on the weather conditions (temperature and humidity)
+                filtered_recommendations = [
+                    {
+                        "device": result["device"],
+                        "humidity": result["humidity"],
+                        "temp": result["temp"]
+                    }
+                    for result in model_results
+                    if temperature_min <= result.get('temp', float('inf')) <= temperature_max and
+                    humidity_min <= result.get('humidity', float('inf')) <= humidity_max
+                ]
+                
+                if filtered_recommendations:
+                    recommendations.extend(filtered_recommendations)
     
-    if model_results:
-        # Filter results based on the device ID
-        filtered_results = [result for result in model_results if result.get('device') == device_id]
-        if filtered_results:
-            return jsonify(filtered_results), 200
-        else:
-            return jsonify({"message": f"No results found for device {device_id}."}), 404
+    if recommendations:
+        return jsonify(recommendations), 200
     else:
-        return jsonify({"message": f"Results for {model_name} not found."}), 404
+        return jsonify({"message": "No recommendations found for the specified weather conditions."}), 404
 
-@app.route('/api/results/<model_name>/timestamp', methods=['GET'])
-def get_timestamp_results(model_name):
-    """Get predictions for a specific timestamp from a specific model."""
-    timestamp = request.args.get('ts')
-    if not timestamp:
-        return jsonify({"message": "Timestamp (ts) is required."}), 400
-    
-    model_file_path = os.path.join(MODEL_RESULTS_DIR1, f"{model_name}.json")
-    model_results = read_json_lines(model_file_path)
-    
-    if model_results:
-        # Filter results based on the timestamp
-        filtered_results = [result for result in model_results if result.get('ts') == timestamp]
-        if filtered_results:
-            return jsonify(filtered_results), 200
-        else:
-            return jsonify({"message": f"No results found for timestamp {timestamp}."}), 404
-    else:
-        return jsonify({"message": f"Results for {model_name} not found."}), 404
+
+# Additional endpoints would go here as needed
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
